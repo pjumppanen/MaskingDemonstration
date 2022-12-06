@@ -1,0 +1,10 @@
+Masking Demonstration
+---------------------
+This HTML5 app implements a simple demonstration of two tone masking
+in human hearing. A reference / masking tone is played at a specific
+frequency chosen by user input an a secondary tone with frequency 
+relative to the reference tone is also chosen by the user along with
+the playback level relative to the reference tone. The user can thereby
+listen to the two tones and hear the effect of masking. The user is 
+also able to plot there findings to build a masking profile for their
+own hearing.

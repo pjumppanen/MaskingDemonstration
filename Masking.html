@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masking Demonstration</title>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.1/themes/base/jquery-ui.css">
+  <script src="https://code.jquery.com/jquery-3.6.0.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.1/jquery-ui.js"></script>
+  <script>
+    var audioCtx          = null;
+    var oscillatorA       = null;
+    var gainA             = null;
+    var oscillatorB       = null;
+    var gainB             = null;
+    var mixer             = null;
+    var stopped           = true;
+    var MinFreq           = 20.0;
+    var MaxFreq           = 5000.0;
+    var NumFreq           = 1000;
+    var BaseRatio         = Math.exp(Math.log(MaxFreq / MinFreq) / NumFreq);
+    var DefaultFreqSlider = Math.floor(Math.log(440.0 / MinFreq) / Math.log(BaseRatio));
+
+    var NumMaskRatio      = 500;
+    var BaseMask          = Math.pow(16, 1.0 / NumMaskRatio);
+
+    var RefGain           = 0.2;
+    var NumMaskedGain     = 1000;
+    var MaskedGainBase    = 0.001;
+    var MaskedGainRatio   = Math.pow(1.0 / MaskedGainBase, 1.0 / NumMaskedGain); // 60dB
+
+    var MaskToneEnabled   = true;
+
+    var GraphHeight       = 330;
+    var GraphWidth        = 720;
+    var GraphOffsetX      = 54;
+    var GraphOffsetY      = 15;
+
+    var PlotFreqArray     = [];
+    var PlotLevelArray    = [];
+    var LastFreq          = 0;
+
+    $(function()
+    {
+      var initialise = function(bStart)
+      {
+        if (audioCtx == null)
+        {
+          // define navigator.mediaDevices.getUserMedia
+          // Older browsers might not implement mediaDevices at all, so we set an empty object first
+          if (navigator.mediaDevices === undefined)
+          {
+            navigator.mediaDevices = {};
+          }
+
+          // Some browsers partially implement mediaDevices. We can't just assign an object
+          // with getUserMedia as it would overwrite existing properties.
+          // Here, we will just add the getUserMedia property if it's missing.
+          if (navigator.mediaDevices.getUserMedia === undefined)
+          {
+            navigator.mediaDevices.getUserMedia = function(constraints)
+            {
+              // First get ahold of the legacy getUserMedia, if present
+              var getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+              // Some browsers just don't implement it - return a rejected promise with an error
+              // to keep a consistent interface
+              if (!getUserMedia) {
+                return Promise.reject(new Error('getUserMedia is not implemented in this browser'));
+              }
+
+              // Otherwise, wrap the call to the old navigator.getUserMedia with a Promise
+              return new Promise(function(resolve, reject)
+                                {
+                                  getUserMedia.call(navigator, constraints, resolve, reject);
+                                });
+            }
+          }
+
+          // create default context to find default sample rate and then find the divison to give nominally 10kHz sampling
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+          mixer = audioCtx.createChannelMerger(2);
+          gainA = new GainNode(audioCtx);
+          gainB = new GainNode(audioCtx);
+
+          oscillatorA       = audioCtx.createOscillator();
+          oscillatorA.type  = 'sine';
+          oscillatorA.frequency.setValueAtTime(frequency(), audioCtx.currentTime);
+          oscillatorA.connect(gainA).connect(mixer, 0, 0);
+          gainA.gain.setValueAtTime(RefGain, audioCtx.currentTime);
+
+          oscillatorB       = audioCtx.createOscillator();
+          oscillatorB.type  = 'sine';
+          oscillatorB.frequency.setValueAtTime(maskedFrequency(), audioCtx.currentTime);
+          oscillatorB.connect(gainB).connect(mixer, 0, 1);
+          gainB.gain.setValueAtTime(RefGain * maskedLevel()[0], audioCtx.currentTime);
+
+          mixer.connect(audioCtx.destination);
+
+          oscillatorA.start();
+          oscillatorB.start();
+        }
+
+        if (bStart)
+        {
+          
+          gainA.gain.setValueAtTime(MaskToneEnabled ? RefGain : 0.0, audioCtx.currentTime);
+          gainB.gain.setValueAtTime(RefGain * maskedLevel()[0], audioCtx.currentTime);
+        }
+        else 
+        {
+          gainA.gain.setValueAtTime(0.0, audioCtx.currentTime);
+          gainB.gain.setValueAtTime(0.0, audioCtx.currentTime);
+        }
+      }
+
+      var frequency = function()
+      {
+        var Freq = (MinFreq * Math.pow(BaseRatio, $("#Masking_Frequency").slider("value"))).toFixed(2);
+
+        return (Freq);
+      }
+
+      var maskedFrequency = function()
+      {
+        var Freq = (frequency() * Math.pow(BaseMask, $("#Masked_Frequency").slider("value"))).toFixed(2);
+
+        if (Freq > 20000.0)
+        {
+          Freq = 20000.0;
+        }
+
+        if (Freq < 20.0)
+        {
+          Freq = 20.0;
+        }
+
+        return (Freq);
+      }
+
+      var maskedLevel = function()
+      {
+        var Level     = MaskedGainBase * Math.pow(MaskedGainRatio, $("#Masked_Level").slider("value"));
+        var Level_dB  = (20.0 * Math.log10(Level)).toFixed(2);
+        var Levels    = [Level, Level_dB];
+
+        return (Levels);
+      }
+
+      var mapX = function(freq)
+      {
+        var posX = GraphOffsetX + ((Math.log(freq / 20) / Math.log(20000 / 20.0)) * GraphWidth);
+
+        return (posX);
+      }
+
+      var mapY = function(level)
+      {
+        var posY = GraphOffsetY - GraphHeight * (level - 5) / 65.0;
+
+        return (posY);
+      }
+
+      var drawScaleX = function()
+      {
+        function drawTick(x, style)
+        {
+          var html = "<path style='";
+
+          html = html.concat(style, "' d='M ", x, " ", GraphOffsetY + GraphHeight, " L ", x, " ", GraphOffsetY + GraphHeight + 10, " '/>\n");
+
+          return (html);
+        }
+
+        var html        = "";
+        var style       = "fill:none;stroke-width:1px;stroke:#202020";
+        var Freq        = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+        var FreqLabel   = ['20', '50', '100', '200', '500', '1k', '2k', '5k', '10k', '20k'];
+
+        for (var i = 0 ; i < Freq.length ; i++)
+        {
+          var x = mapX(Freq[i]);
+
+          html = html.concat(drawTick(x, style));
+          html = html.concat("<text font-family='Arial' font-size='16px' text-anchor='middle' fill='rgba(20, 20, 20)' x='", x, "' y='", GraphOffsetY + GraphHeight + 30, "'>", FreqLabel[i], "</text>\n");
+        }
+
+        html = html.concat("<text font-family='Arial' font-size='16px' text-anchor='middle' fill='rgba(20, 20, 20)' x='", mapX(20000), "' y='", GraphOffsetY + GraphHeight + 48, "'>Hz</text>\n");
+
+        $("#ScaleX").html(html);
+      }
+
+      var drawScaleY = function()
+      {
+        function drawTick(y, style)
+        {
+          var html = "<path style='";
+
+          html = html.concat(style, "' d='M ", GraphOffsetX, " ", y, " L ", GraphOffsetX - 10, " ", y, " '/>\n");
+
+          return (html);
+        }
+
+        var html        = "";
+        var style       = "fill:none;stroke-width:1px;stroke:#202020";
+        var Level       = [0, -10, -20, -30, -40, -50, -60];
+        var LevelLabel  = ['0', '-10', '-20', '-30', '-40', '-50', '-60'];
+
+        for (var i = 0 ; i < Level.length ; i++)
+        {
+          var y = mapY(Level[i]);
+
+          html = html.concat(drawTick(y, style));
+          html = html.concat("<text font-family='Arial' font-size='16px' text-anchor='end' fill='rgba(20, 20, 20)' x='", GraphOffsetX - 15, "' y='", y + 6, "'>", LevelLabel[i], "</text>\n");
+        }
+
+        html = html.concat("<text font-family='Arial' font-size='16px' text-anchor='end' fill='rgba(20, 20, 20)' x='", GraphOffsetX - 30, "' y='", mapY(0) + 6, "'>dB</text>\n");
+
+        $("#ScaleY").html(html);
+      }
+
+      var addPlot = function(clear)
+      {
+        var Freq          = frequency();
+        var MaskedFreq    = maskedFrequency();
+        var Level         = maskedLevel()[1];
+        var html          = "";
+        var style         = "fill:none;stroke-width:1px;stroke:#A00000";
+        var circstyle     = "fill:#606060;stroke-width:1px;stroke:#606060";
+        var refstyle      = "fill:none;stroke-width:1px;stroke:#0000C0";
+        var refcircstyle  = "fill:black;stroke-width:1px;stroke:black";
+        var y0            = mapY(-60);
+        var y1            = mapY(0);
+        var x0            = mapX(Freq);
+        
+        if (((Freq != LastFreq) && (LastFreq != 0)) || clear)
+        {
+          PlotFreqArray   = [];
+          PlotLevelArray  = [];
+        }
+
+        if (!clear)
+        {
+          PlotFreqArray.push(MaskedFreq);
+          PlotLevelArray.push(Level);
+        }
+
+        html  = html.concat("<path style='", refstyle, "' d='M ", x0, " ", y0, " L ", x0, " ", y1, " '/>\n");
+        html  = html.concat("<circle style='", refcircstyle, "' cx='", x0, "' cy='", y1, "' r='5'/>\n");
+
+        for (var i = 0 ; i < PlotFreqArray.length ; i++)
+        {
+          var x = mapX(PlotFreqArray[i]);
+          var y = mapY(PlotLevelArray[i]);
+
+          html  = html.concat("<path style='", style, "' d='M ", x, " ", y0, " L ", x, " ", y, " '/>\n");
+          html  = html.concat("<circle style='", circstyle, "' cx='", x, "' cy='", y, "' r='5'/>\n");
+        }
+
+        $("#PlotArea").html(html);
+
+        Freq = LastFreq;
+      }
+
+      $("#Start").button();
+
+      $("#Plot").button().click(function(event)
+      {
+        addPlot(false);
+      });
+
+      $("#Clear").button().click(function(event)
+      {
+        addPlot(true);
+      });
+
+      $("#Masking_Frequency").slider({
+                                        value: DefaultFreqSlider,
+                                        min:   1,
+                                        max:   NumFreq,
+                                        slide: function(event, ui)
+                                        {
+                                          if (oscillatorA != null)
+                                          {
+                                            oscillatorA.frequency.setValueAtTime(frequency(), audioCtx.currentTime);
+                                          }
+
+                                          if (oscillatorB != null)
+                                          {
+                                            oscillatorB.frequency.setValueAtTime(maskedFrequency(), audioCtx.currentTime);
+                                          }
+
+                                          $("#Masking_Frequency_label").val(frequency());
+                                          $("#Masked_Frequency_label").val(maskedFrequency());
+                                          addPlot(true);
+                                        }
+                                      });
+
+      $("#Masking_Frequency_label").val(frequency());
+    
+      $("#Masked_Frequency").slider({
+                                      value: 0,
+                                      min:   -NumMaskRatio,
+                                      max:   NumMaskRatio,
+                                      slide: function(event, ui)
+                                      {
+                                        if (oscillatorB != null)
+                                        {
+                                          oscillatorB.frequency.setValueAtTime(maskedFrequency(), audioCtx.currentTime);
+                                        }
+
+                                        $("#Masked_Frequency_label").val(maskedFrequency());
+                                      }
+                                    });
+
+      $("#Masked_Frequency_label").val(maskedFrequency());
+
+      $("#Masked_Level").slider({
+                                   value: 0,
+                                   min:   0,
+                                   max:   NumMaskedGain,
+                                   slide: function(event, ui)
+                                   {
+                                     if (gainB != null)
+                                     {
+                                       gainB.gain.setValueAtTime(RefGain * maskedLevel()[0], audioCtx.currentTime);
+                                     }
+
+                                     $("#Masked_Level_label").val(maskedLevel()[1]);
+                                   }
+                                 });
+
+      $("#Masked_Level_label").val(maskedLevel()[1]);
+
+
+      $("#Start").click(function(event)
+      {
+        if (stopped)
+        {
+          stopped = false;
+
+          initialise(true);
+
+          $("#Start").button("option", "label", "Stop");
+        }
+        else
+        {
+          $("#Start").button("option", "label", "Start");
+
+          initialise(false);
+
+          stopped = true;
+        }
+
+        event.preventDefault();
+      });
+
+      $("#Masking_Tone_Enable").checkboxradio().on("change", function(event)
+      {
+        MaskToneEnabled = (MaskToneEnabled ? false : true);
+
+        if (gainA != null)
+        {
+          gainA.gain.setValueAtTime(MaskToneEnabled ? RefGain : 0.0, audioCtx.currentTime);
+        }
+      });
+
+      drawScaleX();
+      drawScaleY();
+      addPlot(true);
+    }
+  )
+  </script>
+</head>
+<body>
+  <svg width="800" height="400" viewBox="0 0 800 400"  version="1.1">
+    <rect x="0" y="0" width="800" height="400" fill="honeydew" stroke="black"/>
+    <rect x="54" y="15" width="720" height="330" fill="aliceblue" stroke="black"/>
+    <g id="PlotArea"></g>
+    <g id="ScaleX"></g>
+    <g id="ScaleY"></g>
+  </svg>
+
+  <p>
+    <label for="Masking_Frequency_label">Masking Frequency (Hz):</label>
+    <input type="text" id="Masking_Frequency_label" readonly style="border:0; color:#f6931f; font-weight:bold;">
+  </p>
+  <div id="Masking_Frequency"></div>
+
+  <p>
+    <label for="Masked_Frequency_label">Masked Frequency (Hz):</label>
+    <input type="text" id="Masked_Frequency_label" readonly style="border:0; color:#f6931f; font-weight:bold;">
+  </p>
+  <div id="Masked_Frequency"></div>
+
+  <p>
+    <label for="Masked_Level_label">Masked Level (dB):</label>
+    <input type="text" id="Masked_Level_label" readonly style="border:0; color:#f6931f; font-weight:bold;">
+  </p>
+  <div id="Masked_Level"></div>
+
+  <p>
+  </p>
+
+  <button id="Start" class="ui-button ui-widget ui-corner-all">Start</button>
+  <button id="Plot" class="ui-button ui-widget ui-corner-all">Plot</button>
+  <button id="Clear" class="ui-button ui-widget ui-corner-all">Clear</button>
+  <label for="Masking_Tone_Enable">Masking tone</label>
+  <input type="checkbox" name="Masking_Tone_Enable" id="Masking_Tone_Enable" checked="true">
+</body>
+</html>
