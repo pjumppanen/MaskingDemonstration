@@ -13,7 +13,6 @@
     var gainA             = null;
     var oscillatorB       = null;
     var gainB             = null;
-    var mixer             = null;
     var stopped           = true;
     var MinFreq           = 20.0;
     var MaxFreq           = 5000.0;
@@ -24,7 +23,7 @@
     var NumMaskRatio      = 500;
     var BaseMask          = Math.pow(16, 1.0 / NumMaskRatio);
 
-    var RefGain           = 0.2;
+    var RefGain           = 0.1;
     var NumMaskedGain     = 1000;
     var MaskedGainBase    = 0.001;
     var MaskedGainRatio   = Math.pow(1.0 / MaskedGainBase, 1.0 / NumMaskedGain); // 60dB
@@ -80,23 +79,22 @@
           // create default context to find default sample rate and then find the divison to give nominally 10kHz sampling
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-          mixer = audioCtx.createChannelMerger(2);
-          gainA = new GainNode(audioCtx);
-          gainB = new GainNode(audioCtx);
+          gainA = audioCtx.createGain();
+          gainB = audioCtx.createGain();
 
           oscillatorA       = audioCtx.createOscillator();
           oscillatorA.type  = 'sine';
           oscillatorA.frequency.setValueAtTime(frequency(), audioCtx.currentTime);
-          oscillatorA.connect(gainA).connect(mixer, 0, 0);
+          oscillatorA.connect(gainA);
           gainA.gain.setValueAtTime(RefGain, audioCtx.currentTime);
+          gainA.connect(audioCtx.destination);
 
           oscillatorB       = audioCtx.createOscillator();
           oscillatorB.type  = 'sine';
           oscillatorB.frequency.setValueAtTime(maskedFrequency(), audioCtx.currentTime);
-          oscillatorB.connect(gainB).connect(mixer, 0, 1);
+          oscillatorB.connect(gainB);
           gainB.gain.setValueAtTime(RefGain * maskedLevel()[0], audioCtx.currentTime);
-
-          mixer.connect(audioCtx.destination);
+          gainB.connect(audioCtx.destination);
 
           oscillatorA.start();
           oscillatorB.start();
@@ -104,7 +102,6 @@
 
         if (bStart)
         {
-          
           gainA.gain.setValueAtTime(MaskToneEnabled ? RefGain : 0.0, audioCtx.currentTime);
           gainB.gain.setValueAtTime(RefGain * maskedLevel()[0], audioCtx.currentTime);
         }
